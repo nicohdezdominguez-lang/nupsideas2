@@ -272,6 +272,7 @@ jobs:
           rootProject.name = "NupsIdeas"
           include(":app")
           EOF_NUPS
+      - run: sed -i '1a import androidx.glance.unit.ColorProvider' app/src/main/java/com/nups/ideas/IdeaWidget.kt
       - run: gradle assembleDebug
       - uses: actions/upload-artifact@v4
         with: { name: NupsIdeas-apk, path: app/build/outputs/apk/debug/app-debug.apk }
