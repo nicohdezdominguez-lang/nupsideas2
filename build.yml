@@ -1,0 +1,278 @@
+name: Build APK
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: 8.7 }
+      - name: Crear proyecto
+        run: |
+          mkdir -p $(dirname app/build.gradle.kts)
+          cat > app/build.gradle.kts <<'EOF_NUPS'
+          plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
+          android {
+              namespace = "com.nups.ideas"
+              compileSdk = 34
+              defaultConfig { applicationId = "com.nups.ideas"; minSdk = 26; targetSdk = 34; versionCode = 1; versionName = "1.0" }
+              buildFeatures { compose = true }
+              composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
+              compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+              kotlinOptions { jvmTarget = "17" }
+          }
+          dependencies {
+              implementation(platform("androidx.compose:compose-bom:2024.06.00"))
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.activity:activity-compose:1.9.1")
+              implementation("androidx.glance:glance-appwidget:1.1.0")
+          }
+          EOF_NUPS
+          mkdir -p $(dirname app/src/main/AndroidManifest.xml)
+          cat > app/src/main/AndroidManifest.xml <<'EOF_NUPS'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application android:label="Nups Ideas" android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+                  <receiver android:name=".IdeaWidgetReceiver" android:exported="true">
+                      <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter>
+                      <meta-data android:name="android.appwidget.provider" android:resource="@xml/idea_widget_info"/>
+                  </receiver>
+              </application>
+          </manifest>
+          EOF_NUPS
+          mkdir -p $(dirname app/src/main/java/com/nups/ideas/IdeaWidget.kt)
+          cat > app/src/main/java/com/nups/ideas/IdeaWidget.kt <<'EOF_NUPS'
+          package com.nups.ideas
+          import android.content.Context
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import androidx.glance.*
+          import androidx.glance.action.*
+          import androidx.glance.appwidget.*
+          import androidx.glance.appwidget.action.*
+          import androidx.glance.appwidget.lazy.LazyColumn
+          import androidx.glance.appwidget.lazy.items
+          import androidx.glance.layout.*
+          import androidx.glance.text.*
+
+          val BG = Color(0xFF0E0B12); val CARD = Color(0xFF1B1522)
+          val GOLD = Color(0xFFC9A227); val BLOOD = Color(0xFFB3263A); val BONE = Color(0xFFE8DFCC); val DIM = Color(0xFF7D7488)
+          val IDX = ActionParameters.Key<Int>("idx")
+
+          class IdeaWidget : GlanceAppWidget() {
+              override suspend fun provideGlance(context: Context, id: GlanceId) {
+                  val folders = Store.load(context)
+                  val sel = Store.sel(context).coerceIn(0, (folders.size - 1).coerceAtLeast(0))
+                  val folder = folders.getOrNull(sel)
+                  provideContent {
+                      Column(GlanceModifier.fillMaxSize().background(ColorProvider(BG)).cornerRadius(24.dp).padding(14.dp)) {
+                          Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                              Text("⚔ NUPS FANTASY", GlanceModifier.defaultWeight(),
+                                  style = TextStyle(color = ColorProvider(GOLD), fontWeight = FontWeight.Bold, fontSize = 14.sp))
+                              Text("  ⚙ ＋  ", GlanceModifier.clickable(actionStartActivity<MainActivity>()),
+                                  style = TextStyle(color = ColorProvider(BLOOD), fontWeight = FontWeight.Bold, fontSize = 16.sp))
+                          }
+                          Spacer(GlanceModifier.height(8.dp))
+                          Row(GlanceModifier.fillMaxWidth().background(ColorProvider(CARD)).cornerRadius(12.dp).padding(8.dp)
+                              .clickable(actionRunCallback<NextFolder>()), verticalAlignment = Alignment.CenterVertically) {
+                              Text("‹ ", style = TextStyle(color = ColorProvider(GOLD), fontSize = 16.sp))
+                              Text((folder?.name ?: "Sin carpetas").uppercase(), GlanceModifier.defaultWeight(),
+                                  style = TextStyle(color = ColorProvider(BONE), fontWeight = FontWeight.Bold, fontSize = 14.sp))
+                              val d = folder?.ideas?.count { it.done } ?: 0
+                              Text("$d/${folder?.ideas?.size ?: 0}  ›", style = TextStyle(color = ColorProvider(GOLD), fontSize = 13.sp))
+                          }
+                          Spacer(GlanceModifier.height(6.dp))
+                          val ideas = folder?.ideas ?: emptyList()
+                          if (ideas.isEmpty()) Text("Toca ⚙ ＋ para añadir ideas", style = TextStyle(color = ColorProvider(DIM), fontSize = 12.sp))
+                          else LazyColumn {
+                              items(ideas.indices.toList()) { i ->
+                                  val it = ideas[i]
+                                  Row(GlanceModifier.fillMaxWidth().padding(vertical = 5.dp, horizontal = 4.dp)
+                                      .clickable(actionRunCallback<Toggle>(actionParametersOf(IDX to i))),
+                                      verticalAlignment = Alignment.CenterVertically) {
+                                      Text(if (it.done) "◆  " else "◇  ", style = TextStyle(color = ColorProvider(if (it.done) GOLD else BLOOD), fontSize = 15.sp))
+                                      Text(it.text, style = TextStyle(color = ColorProvider(if (it.done) DIM else BONE), fontSize = 14.sp,
+                                          textDecoration = if (it.done) TextDecoration.LineThrough else TextDecoration.None))
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+
+          class Toggle : ActionCallback {
+              override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+                  val f = Store.load(context).toMutableList(); val s = Store.sel(context)
+                  val i = parameters[IDX] ?: return
+                  val ideas = f[s].ideas.toMutableList()
+                  ideas[i] = ideas[i].copy(done = !ideas[i].done)
+                  f[s] = f[s].copy(ideas = ideas); Store.save(context, f)
+                  IdeaWidget().updateAll(context)
+              }
+          }
+          class NextFolder : ActionCallback {
+              override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+                  val n = Store.load(context).size.coerceAtLeast(1)
+                  Store.setSel(context, (Store.sel(context) + 1) % n)
+                  IdeaWidget().updateAll(context)
+              }
+          }
+          class IdeaWidgetReceiver : GlanceAppWidgetReceiver() { override val glanceAppWidget = IdeaWidget() }
+          EOF_NUPS
+          mkdir -p $(dirname app/src/main/java/com/nups/ideas/MainActivity.kt)
+          cat > app/src/main/java/com/nups/ideas/MainActivity.kt <<'EOF_NUPS'
+          package com.nups.ideas
+          import android.os.Bundle
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.setContent
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.lazy.*
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.text.style.TextDecoration
+          import androidx.compose.ui.unit.dp
+          import androidx.glance.appwidget.updateAll
+          import kotlinx.coroutines.launch
+
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(b: Bundle?) {
+                  super.onCreate(b)
+                  setContent {
+                      val ctx = this; val scope = rememberCoroutineScope()
+                      var folders by remember { mutableStateOf(Store.load(ctx)) }
+                      var sel by remember { mutableIntStateOf(Store.sel(ctx).coerceIn(0, folders.size - 1)) }
+                      var text by remember { mutableStateOf("") }
+                      var newFolder by remember { mutableStateOf<String?>(null) }
+                      fun commit(f: List<Folder>, s: Int = sel) {
+                          folders = f; sel = s.coerceIn(0, (f.size - 1).coerceAtLeast(0))
+                          Store.save(ctx, f); Store.setSel(ctx, sel); scope.launch { IdeaWidget().updateAll(ctx) }
+                      }
+                      val cs = darkColorScheme(primary = GOLD, secondary = BLOOD, background = BG, surface = CARD, onBackground = BONE, onSurface = BONE, onPrimary = BG)
+                      MaterialTheme(colorScheme = cs) {
+                          Surface(Modifier.fillMaxSize(), color = BG) {
+                              Column(Modifier.statusBarsPadding().padding(16.dp)) {
+                                  Text("⚔ NUPS FANTASY", color = GOLD, style = MaterialTheme.typography.headlineSmall)
+                                  Text("Libro de ideas", color = DIM)
+                                  Spacer(Modifier.height(12.dp))
+                                  LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                      itemsIndexed(folders) { i, f ->
+                                          FilterChip(sel == i, { sel = i; Store.setSel(ctx, i); scope.launch { IdeaWidget().updateAll(ctx) } }, { Text(f.name) })
+                                      }
+                                      item { AssistChip({ newFolder = "" }, { Text("＋ Carpeta") }) }
+                                  }
+                                  val f = folders.getOrNull(sel)
+                                  if (f != null) {
+                                      Spacer(Modifier.height(12.dp))
+                                      Row(verticalAlignment = Alignment.CenterVertically) {
+                                          OutlinedTextField(text, { text = it }, Modifier.weight(1f), placeholder = { Text("Nueva idea…") })
+                                          Button({ if (text.isNotBlank()) {
+                                              commit(folders.toMutableList().also { it[sel] = f.copy(ideas = f.ideas + Idea(text.trim(), false)) }); text = "" } },
+                                              Modifier.padding(start = 8.dp)) { Text("＋") }
+                                      }
+                                      LazyColumn(Modifier.weight(1f)) {
+                                          itemsIndexed(f.ideas) { i, idea ->
+                                              Row(verticalAlignment = Alignment.CenterVertically) {
+                                                  Checkbox(idea.done, { d -> commit(folders.toMutableList().also {
+                                                      it[sel] = f.copy(ideas = f.ideas.toMutableList().also { l -> l[i] = idea.copy(done = d) }) }) })
+                                                  Text(idea.text, Modifier.weight(1f), color = if (idea.done) DIM else BONE,
+                                                      textDecoration = if (idea.done) TextDecoration.LineThrough else null)
+                                                  TextButton({ commit(folders.toMutableList().also {
+                                                      it[sel] = f.copy(ideas = f.ideas.filterIndexed { k, _ -> k != i }) }) }) { Text("✕", color = BLOOD) }
+                                              }
+                                          }
+                                      }
+                                      TextButton({ commit(folders.filterIndexed { k, _ -> k != sel }, 0) }) { Text("Borrar carpeta «${f.name}»", color = BLOOD) }
+                                  }
+                              }
+                              newFolder?.let { n ->
+                                  AlertDialog(onDismissRequest = { newFolder = null }, title = { Text("Nueva carpeta") },
+                                      text = { OutlinedTextField(n, { newFolder = it }, placeholder = { Text("Ej: Ideas de enemigos") }) },
+                                      confirmButton = { TextButton({ if (n.isNotBlank()) commit(folders + Folder(n.trim(), emptyList()), folders.size); newFolder = null }) { Text("Crear") } })
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+          EOF_NUPS
+          mkdir -p $(dirname app/src/main/java/com/nups/ideas/Store.kt)
+          cat > app/src/main/java/com/nups/ideas/Store.kt <<'EOF_NUPS'
+          package com.nups.ideas
+          import android.content.Context
+          import org.json.*
+
+          data class Idea(val text: String, val done: Boolean)
+          data class Folder(val name: String, val ideas: List<Idea>)
+
+          object Store {
+              private fun p(c: Context) = c.getSharedPreferences("nups", 0)
+              fun load(c: Context): List<Folder> {
+                  val s = p(c).getString("data", null)
+                      ?: return listOf(Folder("Modelos", emptyList()), Folder("Personajes", emptyList()))
+                  val a = JSONArray(s)
+                  return (0 until a.length()).map {
+                      val o = a.getJSONObject(it); val i = o.getJSONArray("i")
+                      Folder(o.getString("n"), (0 until i.length()).map { k ->
+                          val x = i.getJSONObject(k); Idea(x.getString("t"), x.getBoolean("d")) })
+                  }
+              }
+              fun save(c: Context, f: List<Folder>) {
+                  val a = JSONArray()
+                  f.forEach { fo ->
+                      val ja = JSONArray()
+                      fo.ideas.forEach { ja.put(JSONObject().put("t", it.text).put("d", it.done)) }
+                      a.put(JSONObject().put("n", fo.name).put("i", ja))
+                  }
+                  p(c).edit().putString("data", a.toString()).apply()
+              }
+              fun sel(c: Context) = p(c).getInt("sel", 0)
+              fun setSel(c: Context, i: Int) = p(c).edit().putInt("sel", i).apply()
+          }
+          EOF_NUPS
+          mkdir -p $(dirname app/src/main/res/values/strings.xml)
+          cat > app/src/main/res/values/strings.xml <<'EOF_NUPS'
+          <resources><string name="app_name">Nups Ideas</string></resources>
+          EOF_NUPS
+          mkdir -p $(dirname app/src/main/res/xml/idea_widget_info.xml)
+          cat > app/src/main/res/xml/idea_widget_info.xml <<'EOF_NUPS'
+          <?xml version="1.0" encoding="utf-8"?>
+          <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+              android:minWidth="250dp" android:minHeight="250dp"
+              android:targetCellWidth="4" android:targetCellHeight="4"
+              android:resizeMode="horizontal|vertical"
+              android:initialLayout="@layout/glance_default_loading_layout"
+              android:description="@string/app_name" android:updatePeriodMillis="0"/>
+          EOF_NUPS
+          mkdir -p $(dirname build.gradle.kts)
+          cat > build.gradle.kts <<'EOF_NUPS'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          EOF_NUPS
+          mkdir -p $(dirname gradle.properties)
+          cat > gradle.properties <<'EOF_NUPS'
+          android.useAndroidX=true
+          EOF_NUPS
+          mkdir -p $(dirname settings.gradle.kts)
+          cat > settings.gradle.kts <<'EOF_NUPS'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositories { google(); mavenCentral() } }
+          rootProject.name = "NupsIdeas"
+          include(":app")
+          EOF_NUPS
+      - run: gradle assembleDebug
+      - uses: actions/upload-artifact@v4
+        with: { name: NupsIdeas-apk, path: app/build/outputs/apk/debug/app-debug.apk }
